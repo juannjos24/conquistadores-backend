@@ -35,7 +35,7 @@ def verificar_admin(req: AdminAuthRequest):
 
 class CrearConsejeroRequest(BaseModel):
     nombre: str
-    apellido: str
+    apellido: Optional[str] = ''
     email: Optional[str] = None
     codigo: str
     clase_id: int
@@ -100,7 +100,7 @@ def crear_consejero(req: CrearConsejeroRequest, db: Session = Depends(get_db)):
 
 class ActualizarConsejeroRequest(BaseModel):
     nombre: str
-    apellido: str
+    apellido: Optional[str] = ''
     email: Optional[str] = None
     codigo: Optional[str] = None   # solo si quiere cambiar
     clase_id: int
@@ -140,7 +140,7 @@ def desactivar_consejero(consejero_id: int, db: Session = Depends(get_db)):
 
 class CrearMiembroRequest(BaseModel):
     nombre: str
-    apellido: str
+    apellido: Optional[str] = ''
     clase_id: int
     fecha_nac: Optional[str] = None
 
@@ -184,7 +184,7 @@ def crear_miembro(req: CrearMiembroRequest, db: Session = Depends(get_db)):
 
 class ActualizarMiembroRequest(BaseModel):
     nombre: str
-    apellido: str
+    apellido: Optional[str] = ''
     clase_id: int
 
 
