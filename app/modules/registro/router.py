@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import date, datetime, time
+from datetime import datetime, time
 import pytz
-
 from sqlalchemy import func
+
 from app.config.database import get_db
 from app.models import SesionRegistro, RegistroItem, ConsejeroClase, ItemEvaluacion
 from app.modules.registro.schemas import (
@@ -17,24 +17,34 @@ router = APIRouter(prefix="/registro", tags=["Registro"])
 
 ZONA_HORARIA = pytz.timezone("America/Mexico_City")
 HORA_APERTURA = time(12, 0)
-HORA_CIERRE = time(19, 0)
+HORA_CIERRE = time(23, 0)
 
 
+# =========================
+# VALIDACIÓN HORARIA
+# =========================
 def _verificar_ventana_horaria():
     ahora = datetime.now(ZONA_HORARIA)
-    # if ahora.weekday() !=5:  # 5 = sábado
-    #     raise HTTPException(
-    #         status_code=403,
-    #         detail="El registro solo está disponible los sábados."
-    #     )
-    # hora_actual = ahora.time()
-    # if not (HORA_APERTURA <= hora_actual <= HORA_CIERRE):
-    #     raise HTTPException(
-    #         status_code=403,
-    #         detail="El registro solo está disponible los sábados de 12:00 pm a 7:00 pm."
-    #     )
+
+    # Solo sábado
+    if ahora.weekday() != 5:
+        raise HTTPException(
+            status_code=403,
+            detail="El registro solo está disponible los sábados."
+        )
+
+    # Solo entre 12:00 y 18:00
+    hora_actual = ahora.time()
+    if not (HORA_APERTURA <= hora_actual <= HORA_CIERRE):
+        raise HTTPException(
+            status_code=403,
+            detail="El registro solo está disponible los sábados de 12:00 pm a 6:00 pm."
+        )
 
 
+# =========================
+# ABRIR SESIÓN
+# =========================
 @router.post("/sesion/abrir", response_model=SesionResponse)
 def abrir_sesion(request: AbrirSesionRequest, db: Session = Depends(get_db)):
     _verificar_ventana_horaria()
@@ -48,7 +58,8 @@ def abrir_sesion(request: AbrirSesionRequest, db: Session = Depends(get_db)):
     if not asignacion:
         raise HTTPException(status_code=403, detail="El consejero no está asignado a esta clase.")
 
-    hoy = date.today()
+    hoy = datetime.now(ZONA_HORARIA).date()
+
     sesion_existente = db.query(SesionRegistro).filter(
         SesionRegistro.clase_id == request.clase_id,
         SesionRegistro.fecha_sesion == hoy
@@ -61,24 +72,32 @@ def abrir_sesion(request: AbrirSesionRequest, db: Session = Depends(get_db)):
         clase_id=request.clase_id,
         consejero_id=request.consejero_id,
         fecha_sesion=hoy,
-        abierta_en=datetime.now(),
+        abierta_en=datetime.now(ZONA_HORARIA),
         estado="abierta",
     )
+
     db.add(nueva_sesion)
     db.commit()
     db.refresh(nueva_sesion)
+
     return nueva_sesion
 
 
+# =========================
+# OBTENER SESIÓN HOY
+# =========================
 @router.get("/sesion/{clase_id}/hoy")
 def obtener_sesion_hoy(clase_id: int, db: Session = Depends(get_db)):
-    hoy = date.today()
+    hoy = datetime.now(ZONA_HORARIA).date()
+
     sesion = db.query(SesionRegistro).filter(
         SesionRegistro.clase_id == clase_id,
         SesionRegistro.fecha_sesion == hoy
     ).first()
+
     if not sesion:
         return None
+
     return {
         "id": sesion.id,
         "clase_id": sesion.clase_id,
@@ -89,13 +108,15 @@ def obtener_sesion_hoy(clase_id: int, db: Session = Depends(get_db)):
     }
 
 
+# =========================
+# DETALLE SESIÓN
+# =========================
 @router.get("/sesion/{sesion_id}/detalle")
 def obtener_detalle_sesion(sesion_id: int, db: Session = Depends(get_db)):
-    registros = (
-        db.query(RegistroItem)
-        .filter(RegistroItem.sesion_id == sesion_id)
-        .all()
-    )
+    registros = db.query(RegistroItem).filter(
+        RegistroItem.sesion_id == sesion_id
+    ).all()
+
     return [
         {
             "miembro_id": r.miembro_id,
@@ -106,6 +127,9 @@ def obtener_detalle_sesion(sesion_id: int, db: Session = Depends(get_db)):
     ]
 
 
+# =========================
+# GUARDAR REGISTROS
+# =========================
 @router.post("/guardar")
 def guardar_registros(request: RegistroLoteRequest, db: Session = Depends(get_db)):
     _verificar_ventana_horaria()
@@ -136,23 +160,43 @@ def guardar_registros(request: RegistroLoteRequest, db: Session = Depends(get_db
             ))
 
     db.commit()
+
     return {"ok": True, "guardados": len(request.registros)}
 
 
+# =========================
+# CERRAR SESIÓN
+# =========================
 @router.post("/sesion/cerrar")
 def cerrar_sesion(sesion_id: int, db: Session = Depends(get_db)):
-    sesion = db.query(SesionRegistro).filter(SesionRegistro.id == sesion_id).first()
+    _verificar_ventana_horaria()
+
+    sesion = db.query(SesionRegistro).filter(
+        SesionRegistro.id == sesion_id
+    ).first()
+
     if not sesion:
         raise HTTPException(status_code=404, detail="Sesión no encontrada.")
+
     sesion.estado = "cerrada"
-    sesion.cerrada_en = datetime.now()
+    sesion.cerrada_en = datetime.now(ZONA_HORARIA)
+
     db.commit()
+
     return {"ok": True}
 
 
+# =========================
+# VISTO BUENO
+# =========================
 @router.post("/visto-bueno")
 def dar_visto_bueno(request: VistoBuenoRequest, db: Session = Depends(get_db)):
-    sesion = db.query(SesionRegistro).filter(SesionRegistro.id == request.sesion_id).first()
+    _verificar_ventana_horaria()
+
+    sesion = db.query(SesionRegistro).filter(
+        SesionRegistro.id == request.sesion_id
+    ).first()
+
     if not sesion:
         raise HTTPException(status_code=404, detail="Sesión no encontrada.")
 
@@ -169,11 +213,14 @@ def dar_visto_bueno(request: VistoBuenoRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="No tienes asignación en esta clase.")
 
     sesion.visto_bueno_consejero_id = request.consejero_id
-    sesion.visto_bueno_en = datetime.now()
+    sesion.visto_bueno_en = datetime.now(ZONA_HORARIA)
+
     db.commit()
+
     return {"ok": True}
-
-
+    
+    
+    
 @router.get("/historial/{clase_id}")
 def historial_clase(clase_id: int, db: Session = Depends(get_db)):
     total_items = db.query(func.count(ItemEvaluacion.id)).filter(ItemEvaluacion.activo == True).scalar() or 1
